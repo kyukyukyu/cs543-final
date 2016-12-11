@@ -11,6 +11,10 @@ ORIG_PORT_CONTROLLER = 6653
 ORIG_PORT_REST_API = 8080
 
 
+controllers = []
+switches = []
+
+
 def addHost(net, N):
     name = 'h%d' % N
     ip = '10.0.0.%d' % N
@@ -25,12 +29,18 @@ def MultiControllerNet(c1ip, c1port, c2ip, c2port):
     print "Creating controllers"
     c1 = net.addController(name = 'RemoteFloodlight1', controller = RemoteController, defaultIP=c1ip, port=c1port)
     c2 = net.addController(name = 'RemoteFloodlight2', controller = RemoteController, defaultIP=c2ip, port=c2port)
+    controllers.append(c1)
+    controllers.append(c2)
 
     print "*** Creating switches"
     s1 = net.addSwitch( 's1', cls=OVSSwitch )
     s2 = net.addSwitch( 's2', cls=OVSSwitch )
     s3 = net.addSwitch( 's3', cls=OVSSwitch )
     s4 = net.addSwitch( 's4', cls=OVSSwitch )
+    switches.append(s1)
+    switches.append(s2)
+    switches.append(s3)
+    switches.append(s4)
 
     print "*** Creating hosts"
     hosts1 = [ addHost( net, n ) for n in 3, 4 ]
@@ -98,6 +108,17 @@ def simulate():
                                     cont_addr, cont_ports[1])
     net = MultiControllerNet(cont_addr, cont_ports[0],
                              cont_addr, cont_ports[1])
+    # Wait for switches to be turned on.
+    sleep(10)
+    net.pingAll()
+    # Keep calm and check the Web UI.
+    _ = raw_input("Press return to continue...")
+    # Assign switches to other controller
+    s1, s2, s3, s4 = switches
+    c2 = controllers[1]
+    s1.start([c2])
+    s3.start([c2])
+    s4.start([c2])
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()

@@ -2,6 +2,7 @@
 from time import sleep
 
 from docker.errors import APIError as DockerAPIError
+from mininet.clean import cleanup as mininet_cleanup
 from mininet.cli import CLI
 from mininet.net import Mininet
 from mininet.node import UserSwitch, RemoteController, OVSSwitch
@@ -162,6 +163,7 @@ def main():
         client.start(container=container_id)
     simulate(containers)
     destroy_containers(containers)
+    mininet_cleanup()
 
 
 if __name__ == '__main__':

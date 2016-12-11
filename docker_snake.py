@@ -131,7 +131,7 @@ def destroy_containers(containers):
     for container in containers:
         container_id = container.get('Id')
         print("stopping container {container_id}".format(container_id=container_id))
-        client.stop(container_id)
+        client.kill(container_id)
         try:
             client.remove_container(container=container_id)
         except DockerAPIError as e:

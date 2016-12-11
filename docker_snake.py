@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 from time import sleep
+
+from docker.errors import APIError as DockerAPIError
 from mininet.cli import CLI
 from mininet.net import Mininet
 from mininet.node import UserSwitch, RemoteController, OVSSwitch
@@ -130,7 +132,10 @@ def destroy_containers(containers):
         container_id = container.get('Id')
         print("stopping container {container_id}".format(container_id=container_id))
         client.stop(container_id)
-        client.remove_container(container=container_id)
+        try:
+            client.remove_container(container=container_id)
+        except DockerAPIError as e:
+            client.remove_container(container=container_id, force=True)
 
 
 def main():

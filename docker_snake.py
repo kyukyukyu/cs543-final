@@ -102,7 +102,7 @@ def create_containers(containers):
         containers.append(container)
 
 
-def simulate():
+def simulate(containers):
     cont_addr = "127.0.0.1"
     cont_ports = [ORIG_PORT_CONTROLLER, ORIG_PORT_CONTROLLER + 1]
 
@@ -113,17 +113,20 @@ def simulate():
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()
+    ctn1, ctn2 = containers
+    print("c1: {}%, c2: {}%".format(get_cpu_percentage(ctn1), get_cpu_percentage(ctn2)))
     # Keep calm and check the Web UI.
     _ = raw_input("Press return to continue...")
     # Assign switches to other controller
     s1, s2, s3, s4 = switches
-    c2 = controllers[1]
+    c1, c2 = controllers
     s1.start([c2])
     s3.start([c2])
     s4.start([c2])
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()
+    print("c1: {}%, c2: {}%".format(get_cpu_percentage(ctn1), get_cpu_percentage(ctn2)))
     CLI(net)
 
 
@@ -138,6 +141,18 @@ def destroy_containers(containers):
             client.remove_container(container=container_id, force=True)
 
 
+def get_cpu_percentage(container):
+    cpu_percentage = 0.0
+    stat = client.stats(container, stream=False)
+    precpu_stats = stat[u'precpu_stats']
+    cpu_stats = stat[u'cpu_stats']
+    cpu_delta = float(cpu_stats[u'cpu_usage'][u'total_usage']) - float(precpu_stats[u'cpu_usage'][u'total_usage'])
+    system_cpu_delta = float(cpu_stats[u'system_cpu_usage']) - float(precpu_stats[u'system_cpu_usage'])
+    if cpu_delta > 0.0 and system_cpu_delta > 0.0:
+        cpu_percentage = (cpu_delta / system_cpu_delta) * len(cpu_stats[u'cpu_usage'][u'percpu_usage']) * 100.0
+    return cpu_percentage
+
+
 def main():
     containers = []
     create_containers(containers)
@@ -145,7 +160,7 @@ def main():
         container_id = container.get('Id')
         print("starting container {container_id}".format(container_id=container_id))
         client.start(container=container_id)
-    simulate()
+    simulate(containers)
     destroy_containers(containers)
 
 

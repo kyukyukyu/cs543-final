@@ -13,12 +13,22 @@ import gevent
 
 
 client = docker.from_env()
+DOCKER_HOST = '127.0.0.1'
 ORIG_PORT_CONTROLLER = 6653
 ORIG_PORT_REST_API = 8080
 
 
+# Keep in mind that the list of controllers may contain None object.
+# This is to simplify the management of controller indices.
 controllers = []
 switches = []
+
+
+class Controller(object):
+    __slots__ = ('name', 'container', 'mn_controller',
+                 'port_controller', 'port_rest_api',
+                 'greenlet_cpu_percentage')
+    pass
 
 
 def addHost(net, N):
@@ -27,46 +37,52 @@ def addHost(net, N):
     return net.addHost(name, ip=ip)
 
 
-def MultiControllerNet(c1ip, c1port, c2ip, c2port):
+def MultiControllerNet(controller1, controller2):
     "Create a network with multiple controllers."
 
     net = Mininet(controller=RemoteController, switch=UserSwitch)
 
     print "Creating controllers"
-    c1 = net.addController(name = 'RemoteFloodlight1', controller = RemoteController, defaultIP=c1ip, port=c1port)
-    c2 = net.addController(name = 'RemoteFloodlight2', controller = RemoteController, defaultIP=c2ip, port=c2port)
-    controllers.append(c1)
-    controllers.append(c2)
+    c1 = net.addController(name='RemoteFloodlight1',
+                           controller=RemoteController,
+                           defaultIP=DOCKER_HOST,
+                           port=controller1.port_controller)
+    c2 = net.addController(name='RemoteFloodlight2',
+                           controller=RemoteController,
+                           defaultIP=DOCKER_HOST,
+                           port=controller2.port_controller)
+    controller1.mn_controller = c1
+    controller2.mn_controller = c2
 
     print "*** Creating switches"
-    s1 = net.addSwitch( 's1', cls=OVSSwitch )
-    s2 = net.addSwitch( 's2', cls=OVSSwitch )
-    s3 = net.addSwitch( 's3', cls=OVSSwitch )
-    s4 = net.addSwitch( 's4', cls=OVSSwitch )
+    s1 = net.addSwitch('s1', cls=OVSSwitch)
+    s2 = net.addSwitch('s2', cls=OVSSwitch)
+    s3 = net.addSwitch('s3', cls=OVSSwitch)
+    s4 = net.addSwitch('s4', cls=OVSSwitch)
     switches.append(s1)
     switches.append(s2)
     switches.append(s3)
     switches.append(s4)
 
     print "*** Creating hosts"
-    hosts1 = [ addHost( net, n ) for n in 3, 4 ]
-    hosts2 = [ addHost( net, n ) for n in 5, 6 ]
-    hosts3 = [ addHost( net, n ) for n in 7, 8 ]
-    hosts4 = [ addHost( net, n ) for n in 9, 10 ]
+    hosts1 = [addHost(net, n) for n in 3, 4]
+    hosts2 = [addHost(net, n) for n in 5, 6]
+    hosts3 = [addHost(net, n) for n in 7, 8]
+    hosts4 = [addHost(net, n) for n in 9, 10]
 
     print "*** Creating links"
     for h in hosts1:
-        s1.linkTo( h )
+        s1.linkTo(h)
     for h in hosts2:
-        s2.linkTo( h )
+        s2.linkTo(h)
     for h in hosts3:
-        s3.linkTo( h )
+        s3.linkTo(h)
     for h in hosts4:
-        s4.linkTo( h )
+        s4.linkTo(h)
 
-    s1.linkTo( s2 )
-    s2.linkTo( s3 )
-    s4.linkTo( s2 )
+    s1.linkTo(s2)
+    s2.linkTo(s3)
+    s4.linkTo(s2)
 
     print "*** Building network"
     net.build()
@@ -76,44 +92,43 @@ def MultiControllerNet(c1ip, c1port, c2ip, c2port):
     c2.start()
 
     #print "*** Starting Switches"
-    s1.start( [c1] )
-    s2.start( [c2] )
-    s3.start( [c1] )
-    s4.start( [c1] )
+    s1.start([c1])
+    s2.start([c2])
+    s3.start([c1])
+    s4.start([c1])
 
     return net
 
 
-def create_containers(containers):
+def create_containers():
     logmsg_create = "creating container {name} with controller port {port_controller} and REST API port {port_rest_api}..."
     for i in range(2):
         port_controller = ORIG_PORT_CONTROLLER + i
         port_rest_api = ORIG_PORT_REST_API + i
-        container_name = "floodlight{}".format(i)
+        name = "floodlight{}".format(i)
         host_config = client.create_host_config(port_bindings={
             ORIG_PORT_CONTROLLER: port_controller,
             ORIG_PORT_REST_API: port_rest_api
         })
-        print(logmsg_create.format(name=container_name,
+        print(logmsg_create.format(name=name,
                                    port_controller=port_controller,
                                    port_rest_api=port_rest_api))
         container = client.create_container(image="pierrecdn/floodlight",
                                             detach=True,
-                                            name=container_name,
+                                            name=name,
                                             ports=[port_controller,
                                                    port_rest_api],
                                             host_config=host_config)
-        containers.append(container)
+        controller = Controller()
+        controller.container = container
+        controller.name = name
+        controller.port_controller = port_controller
+        controller.port_rest_api = port_rest_api
+        controllers.append(controller)
 
 
-def simulate(containers):
-    cont_addr = "127.0.0.1"
-    cont_ports = [ORIG_PORT_CONTROLLER, ORIG_PORT_CONTROLLER + 1]
-
-    print "ip1:%s:%s  ip2:%s:%s" % (cont_addr, cont_ports[0],
-                                    cont_addr, cont_ports[1])
-    net = MultiControllerNet(cont_addr, cont_ports[0],
-                             cont_addr, cont_ports[1])
+def simulate():
+    net = MultiControllerNet(*controllers)
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()
@@ -121,7 +136,7 @@ def simulate(containers):
     _ = raw_input("Press return to continue...")
     # Assign switches to other controller
     s1, s2, s3, s4 = switches
-    c1, c2 = controllers
+    c1, c2 = (c.mn_controller for c in controllers)
     s1.start([c2])
     s3.start([c2])
     s4.start([c2])
@@ -132,36 +147,35 @@ def simulate(containers):
     net.stop()
 
 
-def destroy_containers(containers):
-    for container in containers:
-        container_id = container.get('Id')
-        print("stopping container {container_id}".format(container_id=container_id))
-        client.kill(container_id)
+def destroy_containers():
+    for c in controllers:
+        container = c.container
+        print("stopping container {name}...".format(name=c.name))
+        client.kill(container)
         try:
-            client.remove_container(container=container_id)
+            client.remove_container(container)
         except DockerAPIError as e:
-            client.remove_container(container=container_id, force=True)
+            client.remove_container(container, force=True)
 
 
-def start_printing_cpu_percentage(containers):
-    greenlets = []
-    for c in containers:
-        g = gevent.spawn(print_cpu_percentage_stream, c)
-        greenlets.append(g)
-    return greenlets
+def start_monitoring():
+    for c in controllers:
+        g = gevent.spawn(monitor_cpu_percentage, c)
+        c.greenlet_cpu_percentage = g
 
 
-def stop_printing_cpu_percentage(greenlets):
-    for g in greenlets:
+def stop_monitoring():
+    for c in controllers:
+        g = c.greenlet_cpu_percentage
         if not g.dead:
             g.kill()
 
 
-def print_cpu_percentage_stream(container):
-    container_name = client.inspect_container(container)['Name']
+def monitor_cpu_percentage(controller):
+    container = controller.container
     for stat in client.stats(container, decode=True, stream=True):
         percentage = get_cpu_percentage(stat)
-        print("container {name}: {percentage}%".format(name=container_name, percentage=percentage))
+        print("container {name}: {percentage}%".format(name=controller.name, percentage=percentage))
 
 
 def get_cpu_percentage(stat):
@@ -176,16 +190,15 @@ def get_cpu_percentage(stat):
 
 
 def main():
-    containers = []
-    create_containers(containers)
-    ctn_cpu_greenlets = start_printing_cpu_percentage(containers)
-    for container in containers:
-        container_id = container.get('Id')
-        print("starting container {container_id}".format(container_id=container_id))
-        client.start(container=container_id)
-    simulate(containers)
-    stop_printing_cpu_percentage(ctn_cpu_greenlets)
-    destroy_containers(containers)
+    create_containers()
+    for c in controllers:
+        container = c.container
+        print("starting container {name}...".format(name=c.name))
+        client.start(container)
+    start_monitoring()
+    simulate()
+    stop_monitoring()
+    destroy_containers()
     mininet_cleanup()
 
 

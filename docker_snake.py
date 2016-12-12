@@ -2,6 +2,7 @@
 from gevent import monkey; monkey.patch_all()
 
 from time import sleep
+import itertools
 
 from docker.errors import APIError as DockerAPIError
 from mininet.clean import cleanup as mininet_cleanup
@@ -27,8 +28,80 @@ switches = []
 class Controller(object):
     __slots__ = ('name', 'container', 'mn_controller',
                  'port_controller', 'port_rest_api',
+                 'cpu_percentage', 'state',
                  'greenlet_cpu_percentage')
-    pass
+
+    STATE_ACTIVE = 0
+    STATE_PENDING = 1
+    STATE_INACTIVE = 2
+
+    # Atomic counter in Python world.
+    counter = itertools.count()
+
+    def __init__(self, activate=True):
+        self.cpu_percentage = 0.0
+        self.state = Controller.STATE_INACTIVE
+        i = Controller.counter.next()
+        self.name = "floodlight{}".format(i)
+        self.port_controller = ORIG_PORT_CONTROLLER + i
+        self.port_rest_api = ORIG_PORT_REST_API + i
+        self.container = None
+        self.greenlet_cpu_percentage = None
+        if activate:
+            self.activate()
+
+    def activate(self):
+        current_state = self.state
+        if current_state is Controller.STATE_ACTIVE:
+            return
+        if self.container is None:
+            self.create_container()
+        if current_state is Controller.STATE_INACTIVE:
+            client.start(self.container)
+        self.state = Controller.STATE_ACTIVE
+        self.greenlet_cpu_percentage = gevent.spawn(monitor_cpu_percentage, self)
+
+    def create_container(self):
+        port_controller = self.port_controller
+        port_rest_api = self.port_rest_api
+        host_config = client.create_host_config(port_bindings={
+            ORIG_PORT_CONTROLLER: port_controller,
+            ORIG_PORT_REST_API: port_rest_api
+        })
+        container = client.create_container(image="pierrecdn/floodlight",
+                                            detach=True,
+                                            name=self.name,
+                                            ports=[port_controller,
+                                                   port_rest_api],
+                                            host_config=host_config)
+        self.container = container
+
+    def deactivate(self):
+        if self.state is Controller.STATE_INACTIVE:
+            return
+        self.stop_monitoring()
+        client.stop(self.container)
+        self.state = Controller.STATE_INACTIVE
+
+    def set_pending(self):
+        if self.state is Controller.STATE_PENDING:
+            return
+        self.stop_monitoring()
+        self.state = Controller.STATE_PENDING
+
+    def remove(self):
+        self.stop_monitoring()
+        container = self.container
+        client.kill(container)
+        try:
+            client.remove_container(container)
+        except DockerAPIError as e:
+            client.remove_container(container, force=True)
+
+    def stop_monitoring(self):
+        g = self.greenlet_cpu_percentage
+        if not g.dead:
+            g.kill()
 
 
 def addHost(net, N):
@@ -101,30 +174,8 @@ def MultiControllerNet(controller1, controller2):
 
 
 def create_containers():
-    logmsg_create = "creating container {name} with controller port {port_controller} and REST API port {port_rest_api}..."
     for i in range(2):
-        port_controller = ORIG_PORT_CONTROLLER + i
-        port_rest_api = ORIG_PORT_REST_API + i
-        name = "floodlight{}".format(i)
-        host_config = client.create_host_config(port_bindings={
-            ORIG_PORT_CONTROLLER: port_controller,
-            ORIG_PORT_REST_API: port_rest_api
-        })
-        print(logmsg_create.format(name=name,
-                                   port_controller=port_controller,
-                                   port_rest_api=port_rest_api))
-        container = client.create_container(image="pierrecdn/floodlight",
-                                            detach=True,
-                                            name=name,
-                                            ports=[port_controller,
-                                                   port_rest_api],
-                                            host_config=host_config)
-        controller = Controller()
-        controller.container = container
-        controller.name = name
-        controller.port_controller = port_controller
-        controller.port_rest_api = port_rest_api
-        controllers.append(controller)
+        controllers.append(Controller(activate=False))
 
 
 def simulate():
@@ -147,35 +198,16 @@ def simulate():
     net.stop()
 
 
-def destroy_containers():
+def remove_containers():
     for c in controllers:
-        container = c.container
-        print("stopping container {name}...".format(name=c.name))
-        client.kill(container)
-        try:
-            client.remove_container(container)
-        except DockerAPIError as e:
-            client.remove_container(container, force=True)
-
-
-def start_monitoring():
-    for c in controllers:
-        g = gevent.spawn(monitor_cpu_percentage, c)
-        c.greenlet_cpu_percentage = g
-
-
-def stop_monitoring():
-    for c in controllers:
-        g = c.greenlet_cpu_percentage
-        if not g.dead:
-            g.kill()
+        print("removing container {name}...".format(name=c.name))
+        c.remove()
 
 
 def monitor_cpu_percentage(controller):
     container = controller.container
     for stat in client.stats(container, decode=True, stream=True):
-        percentage = get_cpu_percentage(stat)
-        print("container {name}: {percentage}%".format(name=controller.name, percentage=percentage))
+        controller.cpu_percentage = get_cpu_percentage(stat)
 
 
 def get_cpu_percentage(stat):
@@ -192,13 +224,10 @@ def get_cpu_percentage(stat):
 def main():
     create_containers()
     for c in controllers:
-        container = c.container
         print("starting container {name}...".format(name=c.name))
-        client.start(container)
-    start_monitoring()
+        c.activate()
     simulate()
-    stop_monitoring()
-    destroy_containers()
+    remove_containers()
     mininet_cleanup()
 
 

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from gevent import monkey; monkey.patch_all()
+
 from time import sleep
 
 from docker.errors import APIError as DockerAPIError
@@ -7,6 +9,7 @@ from mininet.cli import CLI
 from mininet.net import Mininet
 from mininet.node import UserSwitch, RemoteController, OVSSwitch
 import docker
+import gevent
 
 
 client = docker.from_env()
@@ -114,8 +117,6 @@ def simulate(containers):
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()
-    ctn1, ctn2 = containers
-    print("c1: {}%, c2: {}%".format(get_cpu_percentage(ctn1), get_cpu_percentage(ctn2)))
     # Keep calm and check the Web UI.
     _ = raw_input("Press return to continue...")
     # Assign switches to other controller
@@ -127,7 +128,6 @@ def simulate(containers):
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()
-    print("c1: {}%, c2: {}%".format(get_cpu_percentage(ctn1), get_cpu_percentage(ctn2)))
     CLI(net)
     net.stop()
 
@@ -143,9 +143,29 @@ def destroy_containers(containers):
             client.remove_container(container=container_id, force=True)
 
 
-def get_cpu_percentage(container):
+def start_printing_cpu_percentage(containers):
+    greenlets = []
+    for c in containers:
+        g = gevent.spawn(print_cpu_percentage_stream, c)
+        greenlets.append(g)
+    return greenlets
+
+
+def stop_printing_cpu_percentage(greenlets):
+    for g in greenlets:
+        if not g.dead:
+            g.kill()
+
+
+def print_cpu_percentage_stream(container):
+    container_name = client.inspect_container(container)['Name']
+    for stat in client.stats(container, decode=True, stream=True):
+        percentage = get_cpu_percentage(stat)
+        print("container {name}: {percentage}%".format(name=container_name, percentage=percentage))
+
+
+def get_cpu_percentage(stat):
     cpu_percentage = 0.0
-    stat = client.stats(container, stream=False)
     precpu_stats = stat[u'precpu_stats']
     cpu_stats = stat[u'cpu_stats']
     cpu_delta = float(cpu_stats[u'cpu_usage'][u'total_usage']) - float(precpu_stats[u'cpu_usage'][u'total_usage'])
@@ -158,11 +178,13 @@ def get_cpu_percentage(container):
 def main():
     containers = []
     create_containers(containers)
+    ctn_cpu_greenlets = start_printing_cpu_percentage(containers)
     for container in containers:
         container_id = container.get('Id')
         print("starting container {container_id}".format(container_id=container_id))
         client.start(container=container_id)
     simulate(containers)
+    stop_printing_cpu_percentage(ctn_cpu_greenlets)
     destroy_containers(containers)
     mininet_cleanup()
 

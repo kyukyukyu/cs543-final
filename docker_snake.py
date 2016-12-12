@@ -129,6 +129,7 @@ def simulate(containers):
     net.pingAll()
     print("c1: {}%, c2: {}%".format(get_cpu_percentage(ctn1), get_cpu_percentage(ctn2)))
     CLI(net)
+    net.stop()
 
 
 def destroy_containers(containers):

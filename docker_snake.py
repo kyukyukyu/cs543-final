@@ -141,7 +141,8 @@ class Controller(object):
         if self.state is Controller.STATE_ACTIVE:
             self.stop_monitoring()
         container = self.container
-        client.kill(container)
+        if self.state is Controller.STATE_ACTIVE:
+            client.kill(container)
         try:
             client.remove_container(container)
         except DockerAPIError as e:
@@ -228,15 +229,7 @@ class LoadAdapter(object):
         if self.controller_to_switch_on is not None:
             self.assignment[self.controller_to_switch_on] = set()
         if self.controller_to_switch_off is not None:
-            switches_off = self.assignment[self.controller_to_switch_off]
-            controller = None
-            for controller in self.assignment.iterkeys():
-                if controller is not self.controller_to_switch_off:
-                    break
-            assert controller is not None
-            while len(switches_off) > 0:
-                switch = switches_off.pop()
-                self.assign(switch, controller)
+            return self.do_rebalancing_for_switch_off()
         utilizations = OrderedDict((c, (p, len(self.assignment[c])))
                                    for c, p
                                    in self.cpu_percentages.iteritems())
@@ -247,6 +240,25 @@ class LoadAdapter(object):
                 migration_set.add(best_migration)
             else:
                 return migration_set
+
+    def do_rebalancing_for_switch_off(self):
+        migration_set = set()
+        controller_to_switch_off = self.controller_to_switch_off
+        switches_off = self.assignment[controller_to_switch_off]
+        n_switch_to_assign = len(switches_off) / (len(self.assignment) - 1)
+        for controller in self.assignment.iterkeys():
+            if controller is controller_to_switch_off:
+                continue
+            i = n_switch_to_assign
+            n_switches_off = len(switches_off)
+            if n_switches_off - n_switch_to_assign < n_switch_to_assign:
+                i = n_switches_off
+            for switch in switches_off:
+                if i == 0:
+                    break
+                migration_set.add((switch, controller_to_switch_off, controller))
+                i -= 1
+        return migration_set
 
     def get_best_migration(self, utilizations):
         best_migration = None

@@ -3,7 +3,7 @@
 # interpreter with parts provided by gevent.
 from gevent import monkey; monkey.patch_all()
 
-from collections import OrderedDict
+from collections import Iterator, OrderedDict
 from math import sqrt, floor
 from time import sleep
 import itertools
@@ -204,6 +204,8 @@ class LoadAdapter(object):
         """Run this module."""
         self.running = True
         while self.running:
+            self.controller_to_switch_on = None
+            self.controller_to_switch_off = None
             self.cpu_percentages = OrderedDict((c, c.cpu_percentage)
                                                for c
                                                in self.assignment.iterkeys())
@@ -223,6 +225,18 @@ class LoadAdapter(object):
 
     def do_rebalancing(self):
         migration_set = set()
+        if self.controller_to_switch_on is not None:
+            self.assignment[self.controller_to_switch_on] = set()
+        if self.controller_to_switch_off is not None:
+            switches_off = self.assignment[self.controller_to_switch_off]
+            controller = None
+            for controller in self.assignment.iterkeys():
+                if controller is not self.controller_to_switch_off:
+                    break
+            assert controller is not None
+            while len(switches_off) > 0:
+                switch = switches_off.pop()
+                self.assign(switch, controller)
         utilizations = OrderedDict((c, (p, len(self.assignment[c])))
                                    for c, p
                                    in self.cpu_percentages.iteritems())
@@ -246,7 +260,7 @@ class LoadAdapter(object):
             for switch in self.assignment[c]:
                 break
             for c_, util_ in utilizations.iteritems():
-                if c is c_:
+                if c is c_ or c is self.controller_to_switch_off:
                     continue
                 p_, n_switches_ = util_
                 delta = p / n_switches
@@ -260,18 +274,23 @@ class LoadAdapter(object):
                     best_stddev_improv = stddev_improv
                 utilizations[c] = util
                 utilizations[c_] = util_
-        _, c, c_ = best_migration
-        p, n_switches = utilizations[c]
-        p_, n_switches_ = utilizations[c_]
-        delta = p / n_switches
-        utilizations[c] = (p - delta, n_switches - 1)
-        utilizations[c_] = (p_ + delta, n_switches_ + 1)
+        if best_migration is not None:
+            _, c, c_ = best_migration
+            p, n_switches = utilizations[c]
+            p_, n_switches_ = utilizations[c_]
+            delta = p / n_switches
+            utilizations[c] = (p - delta, n_switches - 1)
+            utilizations[c_] = (p_ + delta, n_switches_ + 1)
         return best_migration, best_stddev_improv
 
     @staticmethod
     def stddev(nums, with_mean=False):
-        m_of_sq = LoadAdapter.mean(x * x for x in nums)
-        m = LoadAdapter.mean(x for x in nums)
+        if isinstance(nums, Iterator):
+            _nums = list(nums)
+        else:
+            _nums = nums
+        m_of_sq = LoadAdapter.mean(x * x for x in _nums)
+        m = LoadAdapter.mean(x for x in _nums)
         ret = sqrt(m_of_sq - m * m)
         if with_mean:
             return ret, m
@@ -280,10 +299,16 @@ class LoadAdapter(object):
 
     @staticmethod
     def mean(nums):
-        return float(sum(nums)) / float(len(nums))
+        if isinstance(nums, Iterator):
+            _nums = list(nums)
+        else:
+            _nums = nums
+        return float(sum(_nums)) / float(len(_nums))
 
     def do_resizing(self):
         for c in Controller.controllers:
+            if c.state is not Controller.STATE_ACTIVE:
+                continue
             if c.cpu_percentage >= self.HIGH_UTIL_THRESH:
                 self.switch_on_controller()
                 return True
@@ -291,6 +316,8 @@ class LoadAdapter(object):
         most_free_controller = None
         min_cpu_percentage = 0.0
         for c in Controller.controllers:
+            if c.state is not Controller.STATE_ACTIVE:
+                continue
             cpu_percentage = c.cpu_percentage
             if cpu_percentage <= self.LOW_UTIL_THRESH:
                 counter += 1
@@ -304,7 +331,8 @@ class LoadAdapter(object):
             return False
 
     def switch_on_controller(self):
-        self.controller_to_switch_on = Controller(activate=False)
+        new_controller = Controller(activate=False)
+        self.controller_to_switch_on = new_controller
 
     def switch_off_controller(self, controller):
         self.controller_to_switch_off = controller
@@ -329,6 +357,8 @@ class LoadAdapter(object):
             return True
 
     def revert_resizing(self):
+        if self.controller_to_switch_on is not None:
+            del self.assignment[self.controller_to_switch_on]
         self.controller_to_switch_on = None
         self.controller_to_switch_off = None
 
@@ -338,7 +368,8 @@ class LoadAdapter(object):
         self.execute_power_off_controller()
 
     def execute_power_on_controller(self):
-        self.controller_to_switch_on.activate()
+        if self.controller_to_switch_on is not None:
+            self.controller_to_switch_on.activate()
 
     def execute_migrations(self, migration_set):
         """Execute the migrations.
@@ -348,13 +379,15 @@ class LoadAdapter(object):
         :type migration_set: collections.Iterable[tuple(mininet.node.OVSSwitch, Controller, Controller)]
         """
         for switch, old_controller, new_controller in migration_set:
-            switch.start([new_controller])
+            switch.start([new_controller.mn_controller])
             switches_old = self.assignment[old_controller]
             switches_old.remove(switch)
             self.assign(switch, new_controller)
 
     def execute_power_off_controller(self):
-        self.controller_to_switch_off.deactivate()
+        if self.controller_to_switch_off is not None:
+            del self.assignment[self.controller_to_switch_off]
+            self.controller_to_switch_off.deactivate()
 
 
 def addHost(net, N):

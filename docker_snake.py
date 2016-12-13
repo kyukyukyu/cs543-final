@@ -3,6 +3,7 @@
 # interpreter with parts provided by gevent.
 from gevent import monkey; monkey.patch_all()
 
+from collections import OrderedDict
 from time import sleep
 import itertools
 
@@ -179,7 +180,7 @@ class LoadAdapter(object):
         self.running = False
         self.controller_to_switch_on = None
         self.controller_to_switch_off = None
-        self.assignment = {}
+        self.assignment = OrderedDict()
         """Controller assignment of the switches. A key-value pair has
         a controller as the key, and the set of switches assigned to the
         controller as the value."""

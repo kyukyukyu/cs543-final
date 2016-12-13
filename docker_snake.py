@@ -159,8 +159,7 @@ class Controller(object):
     @classmethod
     def remove_containers(cls):
         for c in cls.controllers:
-            # TODO: print this message using logger.
-            #print("removing container {name}...".format(name=c.name))
+            print("removing container {name}...".format(name=c.name))
             c.remove_container()
 
 
@@ -225,6 +224,7 @@ class LoadAdapter(object):
         self.running = False
 
     def do_rebalancing(self):
+        print("rebalancing...")
         migration_set = set()
         if self.controller_to_switch_on is not None:
             self.assignment[self.controller_to_switch_on] = set()
@@ -239,6 +239,7 @@ class LoadAdapter(object):
             if stddev_improv >= LoadAdapter.STDDEV_THRESH:
                 migration_set.add(best_migration)
             else:
+                print("returning migration set...")
                 return migration_set
 
     def do_rebalancing_for_switch_off(self):
@@ -261,6 +262,7 @@ class LoadAdapter(object):
         return migration_set
 
     def get_best_migration(self, utilizations):
+        print("finding best migration...")
         best_migration = None
         best_stddev_improv = 0.0
         stddev = LoadAdapter.stddev(p for p, _ in utilizations.itervalues())
@@ -343,10 +345,12 @@ class LoadAdapter(object):
             return False
 
     def switch_on_controller(self):
+        print("let's switch on a controller!")
         new_controller = Controller(activate=False)
         self.controller_to_switch_on = new_controller
 
     def switch_off_controller(self, controller):
+        print("let's switch off {name}!".format(name=controller.name))
         self.controller_to_switch_off = controller
 
     def check_resizing(self):
@@ -369,6 +373,7 @@ class LoadAdapter(object):
             return True
 
     def revert_resizing(self):
+        print("reverts resizing...")
         if self.controller_to_switch_on is not None:
             del self.assignment[self.controller_to_switch_on]
         self.controller_to_switch_on = None
@@ -381,6 +386,7 @@ class LoadAdapter(object):
 
     def execute_power_on_controller(self):
         if self.controller_to_switch_on is not None:
+            print("activate the new controller {name}...".format(name=self.controller_to_switch_on.name))
             self.controller_to_switch_on.activate()
 
     def execute_migrations(self, migration_set):
@@ -395,9 +401,14 @@ class LoadAdapter(object):
             switches_old = self.assignment[old_controller]
             switches_old.remove(switch)
             self.assign(switch, new_controller)
+            print("migrating switch {switch_name} from {old_ctrl_name} to {new_ctrl_name}..."
+                  .format(switch_name=switch.name,
+                          old_ctrl_name=old_controller.name,
+                          new_ctrl_name=new_controller.name))
 
     def execute_power_off_controller(self):
         if self.controller_to_switch_off is not None:
+            print("power off controller {name}...".format(name=self.controller_to_switch_off.name))
             del self.assignment[self.controller_to_switch_off]
             self.controller_to_switch_off.deactivate()
 

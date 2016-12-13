@@ -419,7 +419,7 @@ def addHost(net, N):
     return net.addHost(name, ip=ip)
 
 
-def MultiControllerNet(controller1, controller2):
+def MultiControllerNet(controller1, controller2, controller3):
     "Create a network with multiple controllers."
 
     net = Mininet(controller=RemoteController, switch=UserSwitch)
@@ -433,38 +433,49 @@ def MultiControllerNet(controller1, controller2):
                            controller=RemoteController,
                            defaultIP=DOCKER_HOST,
                            port=controller2.port_controller)
+    c3 = net.addController(name='RemoteFloodlight3',
+                           controller=RemoteController,
+                           defaultIP=DOCKER_HOST,
+                           port=controller3.port_controller)
     controller1.mn_controller = c1
     controller2.mn_controller = c2
+    controller3.mn_controller = c3
 
     print "*** Creating switches"
     s1 = net.addSwitch('s1', cls=OVSSwitch)
     s2 = net.addSwitch('s2', cls=OVSSwitch)
     s3 = net.addSwitch('s3', cls=OVSSwitch)
     s4 = net.addSwitch('s4', cls=OVSSwitch)
+    s5 = net.addSwitch('s5', cls=OVSSwitch)
+    s6 = net.addSwitch('s6', cls=OVSSwitch)
     switches.append(s1)
     switches.append(s2)
     switches.append(s3)
     switches.append(s4)
+    switches.append(s5)
+    switches.append(s6)
 
     print "*** Creating hosts"
     hosts1 = [addHost(net, n) for n in 3, 4]
-    hosts2 = [addHost(net, n) for n in 5, 6]
-    hosts3 = [addHost(net, n) for n in 7, 8]
-    hosts4 = [addHost(net, n) for n in 9, 10]
+    hosts2 = [addHost(net, n) for n in 5, 6, 7]
+    hosts3 = [addHost(net, n) for n in 8, 9]
+    hosts4 = [addHost(net, n) for n in 10, 11, 12]
+    hosts5 = [addHost(net, n) for n in 13, 14, 15]
+    hosts6 = [addHost(net, n) for n in 16, 17, 18]
+    host_lists = [hosts1, hosts2, hosts3, hosts4, hosts5, hosts6]
 
     print "*** Creating links"
-    for h in hosts1:
-        s1.linkTo(h)
-    for h in hosts2:
-        s2.linkTo(h)
-    for h in hosts3:
-        s3.linkTo(h)
-    for h in hosts4:
-        s4.linkTo(h)
+    for s, hosts in zip(switches, host_lists):
+        for h in hosts:
+            s.linkTo(h)
 
     s1.linkTo(s2)
     s2.linkTo(s3)
-    s4.linkTo(s2)
+    s3.linkTo(s4)
+    s4.linkTo(s5)
+    s5.linkTo(s6)
+    s6.linkTo(s1)
+    s1.linkTo(s4)
 
     print "*** Building network"
     net.build()
@@ -472,35 +483,41 @@ def MultiControllerNet(controller1, controller2):
     # In theory this doesn't do anything
     c1.start()
     c2.start()
+    c3.start()
 
     #print "*** Starting Switches"
     s1.start([c1])
-    s2.start([c2])
+    s2.start([c1])
     s3.start([c1])
-    s4.start([c1])
+    s4.start([c2])
+    s5.start([c2])
+    s6.start([c2])
 
     return net
 
 
 def create_containers():
-    for i in range(2):
+    for i in range(3):
         Controller(activate=False)
 
 
 def simulate():
     net = MultiControllerNet(*Controller.controllers)
+    net.start()
     # Wait for switches to be turned on.
     sleep(20)
-    s1, s2, s3, s4 = switches
-    c1, c2 = Controller.controllers
+    s1, s2, s3, s4, s5, s6 = switches
+    c1, c2, c3 = Controller.controllers
     adapter = LoadAdapter()
     adapter.assign(s1, c1)
-    adapter.assign(s2, c2)
+    adapter.assign(s2, c1)
     adapter.assign(s3, c1)
-    adapter.assign(s4, c1)
+    adapter.assign(s4, c2)
+    adapter.assign(s5, c2)
+    adapter.assign(s6, c2)
     g = gevent.spawn(adapter.run)
     # Keep running for a while.
-    sleep(60)
+    sleep(30)
     adapter.stop()
     _ = raw_input("Press return to continue...")
     CLI(net)

@@ -4,6 +4,7 @@
 from gevent import monkey; monkey.patch_all()
 
 from collections import OrderedDict
+from math import sqrt
 from time import sleep
 import itertools
 
@@ -171,10 +172,11 @@ class LoadAdapter(object):
 
     __slots__ = ('running',
                  'controller_to_switch_on', 'controller_to_switch_off',
-                 'assignment')
+                 'assignment', 'cpu_percentages')
 
     HIGH_UTIL_THRESH = 70.0
     LOW_UTIL_THRESH = 10.0
+    STDDEV_THRESH = 0.25
 
     def __init__(self):
         self.running = False
@@ -202,6 +204,9 @@ class LoadAdapter(object):
         """Run this module."""
         self.running = True
         while self.running:
+            self.cpu_percentages = OrderedDict((c, c.cpu_percentage)
+                                               for c
+                                               in self.assignment.iterkeys())
             migration_set = self.do_rebalancing()
             if migration_set is None:
                 if self.do_resizing():
@@ -218,9 +223,41 @@ class LoadAdapter(object):
 
     def do_rebalancing(self):
         migration_set = None
-        # TODO: implement the migration plan. Make migration_set like
+        # Copy CPU percentages to avoid inconsistency issue.
+        stddev, mean = LoadAdapter.stddev((percentage
+                                           for _, percentage
+                                           in self.cpu_percentages.iteritems()),
+                                          with_mean=True)
+        if mean >= LoadAdapter.HIGH_UTIL_THRESH:
+            # Migration not available.
+            return None
+        migration_set, new_cpu_percentages = \
+            self.get_best_migration(self.cpu_percentages)
+        new_stddev = LoadAdapter.stddev((percentage
+                                         for _, percentage
+                                         in new_cpu_percentages.iteritems()))
+        if stddev - new_stddev < LoadAdapter.STDDEV_THRESH:
+            return None
+        else:
+            return migration_set
+
+    def get_best_migration(self, cpu_percentages):
         # [(switch, old_controller, new_controller), (switch_, old_controller_, new_controller_)]
-        return migration_set
+        pass
+
+    @staticmethod
+    def stddev(nums, with_mean=False):
+        m_of_sq = LoadAdapter.mean(x * x for x in nums)
+        m = LoadAdapter.mean(x for x in nums)
+        ret = sqrt(m_of_sq - m * m)
+        if with_mean:
+            return ret, m
+        else:
+            return m_of_sq - m * m
+
+    @staticmethod
+    def mean(nums):
+        return float(sum(nums)) / float(len(nums))
 
     def do_resizing(self):
         for c in Controller.controllers:

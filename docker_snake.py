@@ -4,7 +4,7 @@
 from gevent import monkey; monkey.patch_all()
 
 from collections import OrderedDict
-from math import sqrt
+from math import sqrt, floor
 from time import sleep
 import itertools
 
@@ -287,8 +287,23 @@ class LoadAdapter(object):
         self.controller_to_switch_off = controller
 
     def check_resizing(self):
-        # TODO: actual check for resizing.
-        return True
+        if self.controller_to_switch_on is not None:
+            # A new controller will be switched on.
+            return True
+        new_cpu_percentages = OrderedDict(self.cpu_percentages)
+        controller_off = self.controller_to_switch_off
+        p_off = new_cpu_percentages.pop(controller_off)
+        n_switches = len(self.assignment[controller_off])
+        p_switch = p_off / n_switches
+        for p in new_cpu_percentages.itervalues():
+            n_moves = int(floor((LoadAdapter.HIGH_UTIL_THRESH - p) / p_switch))
+            n_switches -= n_moves
+            if n_switches <= 0:
+                break
+        if n_switches > 0:
+            return False
+        else:
+            return True
 
     def revert_resizing(self):
         self.controller_to_switch_on = None

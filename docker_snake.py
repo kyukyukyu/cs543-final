@@ -208,7 +208,7 @@ class LoadAdapter(object):
                                                for c
                                                in self.assignment.iterkeys())
             migration_set = self.do_rebalancing()
-            if migration_set is None:
+            if 0 == len(migration_set):
                 if self.do_resizing():
                     if self.check_resizing():
                         migration_set = self.do_rebalancing()
@@ -222,28 +222,51 @@ class LoadAdapter(object):
         self.running = False
 
     def do_rebalancing(self):
-        migration_set = None
-        # Copy CPU percentages to avoid inconsistency issue.
-        stddev, mean = LoadAdapter.stddev((percentage
-                                           for _, percentage
-                                           in self.cpu_percentages.iteritems()),
-                                          with_mean=True)
-        if mean >= LoadAdapter.HIGH_UTIL_THRESH:
-            # Migration not available.
-            return None
-        migration_set, new_cpu_percentages = \
-            self.get_best_migration(self.cpu_percentages)
-        new_stddev = LoadAdapter.stddev((percentage
-                                         for _, percentage
-                                         in new_cpu_percentages.iteritems()))
-        if stddev - new_stddev < LoadAdapter.STDDEV_THRESH:
-            return None
-        else:
-            return migration_set
+        migration_set = set()
+        utilizations = OrderedDict((c, (p, len(self.assignment[c])))
+                                   for c, p
+                                   in self.cpu_percentages.iteritems())
+        while True:
+            best_migration, stddev_improv =\
+                self.get_best_migration(utilizations)
+            if stddev_improv >= LoadAdapter.STDDEV_THRESH:
+                migration_set.add(best_migration)
+            else:
+                return migration_set
 
-    def get_best_migration(self, cpu_percentages):
-        # [(switch, old_controller, new_controller), (switch_, old_controller_, new_controller_)]
-        pass
+    def get_best_migration(self, utilizations):
+        best_migration = None
+        best_stddev_improv = 0.0
+        stddev = LoadAdapter.stddev(p for p, _ in utilizations.itervalues())
+        for c, util in utilizations.iteritems():
+            p, n_switches = util
+            if 0 == n_switches:
+                continue
+            switch = None
+            for switch in self.assignment[c]:
+                break
+            for c_, util_ in utilizations.iteritems():
+                if c is c_:
+                    continue
+                p_, n_switches_ = util_
+                delta = p / n_switches
+                utilizations[c] = (p - delta, n_switches - 1)
+                utilizations[c_] = (p_ + delta, n_switches_ + 1)
+                new_stddev = LoadAdapter.stddev(p for p, _
+                                                  in utilizations.itervalues())
+                stddev_improv = stddev - new_stddev
+                if best_stddev_improv < stddev_improv:
+                    best_migration = (switch, c, c_)
+                    best_stddev_improv = stddev_improv
+                utilizations[c] = util
+                utilizations[c_] = util_
+        _, c, c_ = best_migration
+        p, n_switches = utilizations[c]
+        p_, n_switches_ = utilizations[c_]
+        delta = p / n_switches
+        utilizations[c] = (p - delta, n_switches - 1)
+        utilizations[c_] = (p_ + delta, n_switches_ + 1)
+        return best_migration, best_stddev_improv
 
     @staticmethod
     def stddev(nums, with_mean=False):

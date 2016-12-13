@@ -21,9 +21,6 @@ ORIG_PORT_CONTROLLER = 6653
 ORIG_PORT_REST_API = 8080
 
 
-# Keep in mind that the list of controllers may contain None object.
-# This is to simplify the management of controller indices.
-controllers = []
 switches = []
 
 
@@ -46,6 +43,9 @@ class Controller(object):
     the same time, we need to guarantee the atomicity of counter.
     """
 
+    #: Global list of controllers created.
+    controllers = []
+
     def __init__(self, activate=True):
         """Create a new controller.
 
@@ -66,6 +66,7 @@ class Controller(object):
         self.greenlet_cpu_percentage = None
         if activate:
             self.activate()
+        Controller.controllers.append(self)
 
     def activate(self):
         """Activate this controller.
@@ -76,7 +77,8 @@ class Controller(object):
         if current_state is Controller.STATE_ACTIVE:
             return
         if self.container is None:
-            # This is the first time this controller is activated.
+            # This is the first time this controller is activated, or
+            # the Docker container has been removed.
             self.create_container()
         if current_state is Controller.STATE_INACTIVE:
             # The Docker container must be running
@@ -125,7 +127,7 @@ class Controller(object):
         self.stop_monitoring()
         self.state = Controller.STATE_PENDING
 
-    def remove(self):
+    def remove_container(self):
         """Remove the Docker container where this controller runs.
 
         Since this function kills the Docker container, make sure you are not
@@ -147,6 +149,13 @@ class Controller(object):
         g = self.greenlet_cpu_percentage
         if not g.dead:
             g.kill()
+
+    @classmethod
+    def remove_containers(cls):
+        for c in cls.controllers:
+            # TODO: print this message using logger.
+            #print("removing container {name}...".format(name=c.name))
+            c.remove_container()
 
 
 def addHost(net, N):
@@ -220,11 +229,11 @@ def MultiControllerNet(controller1, controller2):
 
 def create_containers():
     for i in range(2):
-        controllers.append(Controller(activate=False))
+        Controller(activate=False)
 
 
 def simulate():
-    net = MultiControllerNet(*controllers)
+    net = MultiControllerNet(*Controller.controllers)
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()
@@ -232,7 +241,7 @@ def simulate():
     _ = raw_input("Press return to continue...")
     # Assign switches to other controller
     s1, s2, s3, s4 = switches
-    c1, c2 = (c.mn_controller for c in controllers)
+    c1, c2 = (c.mn_controller for c in Controller.controllers)
     s1.start([c2])
     s3.start([c2])
     s4.start([c2])
@@ -241,12 +250,6 @@ def simulate():
     net.pingAll()
     CLI(net)
     net.stop()
-
-
-def remove_containers():
-    for c in controllers:
-        print("removing container {name}...".format(name=c.name))
-        c.remove()
 
 
 def monitor_cpu_percentage(controller):
@@ -268,11 +271,11 @@ def get_cpu_percentage(stat):
 
 def main():
     create_containers()
-    for c in controllers:
+    for c in Controller.controllers:
         print("starting container {name}...".format(name=c.name))
         c.activate()
     simulate()
-    remove_containers()
+    Controller.remove_containers()
     mininet_cleanup()
 
 

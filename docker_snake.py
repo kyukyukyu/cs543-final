@@ -479,20 +479,19 @@ def create_containers():
 def simulate():
     net = MultiControllerNet(*Controller.controllers)
     # Wait for switches to be turned on.
-    sleep(10)
-    net.pingAll()
-    # Keep calm and check the Web UI.
-    _ = raw_input("Press return to continue...")
-    # Assign switches to other controller
+    sleep(20)
     s1, s2, s3, s4 = switches
-    c1, c2 = (c.mn_controller for c in Controller.controllers)
-    s1.start([c2])
-    s3.start([c2])
-    s4.start([c2])
-    # Wait for switches to be turned on.
-    sleep(10)
-    net.pingAll()
-    # TODO: run the actual load adaption here, by creating a LoadAdapter object, assign the controller to switches, and run the adapter.
+    c1, c2 = Controller.controllers
+    adapter = LoadAdapter()
+    adapter.assign(s1, c1)
+    adapter.assign(s2, c2)
+    adapter.assign(s3, c1)
+    adapter.assign(s4, c1)
+    g = gevent.spawn(adapter.run)
+    # Keep running for a while.
+    sleep(60)
+    adapter.stop()
+    _ = raw_input("Press return to continue...")
     CLI(net)
     net.stop()
 

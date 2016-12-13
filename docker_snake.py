@@ -333,16 +333,14 @@ class LoadAdapter(object):
         return float(sum(_nums)) / float(len(_nums))
 
     def do_resizing(self):
-        for c in Controller.controllers:
-            if c.state is not Controller.STATE_ACTIVE:
-                continue
+        for c in self.assignment.iterkeys():
             if c.cpu_percentage >= self.HIGH_UTIL_THRESH:
                 self.switch_on_controller()
                 return True
         counter = 0
         most_free_controller = None
         min_cpu_percentage = 0.0
-        for c in Controller.controllers:
+        for c in self.assignment.iterkeys():
             if c.state is not Controller.STATE_ACTIVE:
                 continue
             cpu_percentage = c.cpu_percentage

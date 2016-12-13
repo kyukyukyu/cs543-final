@@ -6,11 +6,13 @@ from gevent import monkey; monkey.patch_all()
 from collections import Iterator, OrderedDict
 from math import sqrt, floor
 from time import sleep
+from datetime import datetime
 import itertools
+import random
 
 from docker.errors import APIError as DockerAPIError
 from mininet.clean import cleanup as mininet_cleanup
-from mininet.cli import CLI
+from mininet.log import setLogLevel
 from mininet.net import Mininet
 from mininet.node import UserSwitch, RemoteController, OVSSwitch
 import docker
@@ -22,8 +24,12 @@ DOCKER_HOST = '127.0.0.1'
 ORIG_PORT_CONTROLLER = 6653
 ORIG_PORT_REST_API = 8080
 
+num_packets = 0
+rtt_sum = 0
+
 
 switches = []
+list_hosts = []
 
 
 class Controller(object):
@@ -361,6 +367,8 @@ class LoadAdapter(object):
         controller_off = self.controller_to_switch_off
         p_off = new_cpu_percentages.pop(controller_off)
         n_switches = len(self.assignment[controller_off])
+        if n_switches == 0:
+            return True
         p_switch = p_off / n_switches
         for p in new_cpu_percentages.itervalues():
             n_moves = int(floor((LoadAdapter.HIGH_UTIL_THRESH - p) / p_switch))
@@ -468,6 +476,7 @@ def MultiControllerNet(controller1, controller2, controller3):
     for s, hosts in zip(switches, host_lists):
         for h in hosts:
             s.linkTo(h)
+            list_hosts.append(h)
 
     s1.linkTo(s2)
     s2.linkTo(s3)
@@ -496,6 +505,34 @@ def MultiControllerNet(controller1, controller2, controller3):
     return net
 
 
+def ping_random_hosts(net):
+    global rtt_sum, num_packets
+    while True:
+        r1 = random.randrange(1, 16)
+        r2 = random.randrange(1, 16)
+        while r1 == r2:
+            r2 = random.randrange(1, 16)
+
+        hx = list_hosts[r1] #random host1
+        hy = list_hosts[r2] #random host2
+        ping_delays = net.pingFull([hx, hy])
+        test_outputs = ping_delays[0]
+        node, dest, ping_outputs = test_outputs
+        sent, received, rttmin, rttavg, rttmax, rttdev = ping_outputs
+        rtt_sum += rttavg
+        num_packets += 1
+
+
+def check_response_time():
+    global rtt_sum, num_packets
+    while True:
+        sleep(1)
+        if num_packets > 0:
+            print float(rtt_sum) / float(num_packets)
+        rtt_sum = 0
+        num_packets = 0
+
+
 def create_containers():
     for i in range(3):
         Controller(activate=False)
@@ -515,12 +552,18 @@ def simulate():
     adapter.assign(s4, c2)
     adapter.assign(s5, c2)
     adapter.assign(s6, c2)
-    g = gevent.spawn(adapter.run)
+    # Run the load adapter module.
+    gevent.spawn(adapter.run)
+    # Send pings between a random pair of hosts.
+    g_ping = gevent.spawn(ping_random_hosts, net)
+    # Check response time periodically.
+    g_res = gevent.spawn(check_response_time)
     # Keep running for a while.
-    sleep(30)
+    sleep(60)
+    # Stop the tasks.
+    g_res.kill()
+    g_ping.kill()
     adapter.stop()
-    _ = raw_input("Press return to continue...")
-    CLI(net)
     net.stop()
 
 
@@ -552,4 +595,6 @@ def main():
 
 
 if __name__ == '__main__':
+    random.seed(datetime.now())
+    setLogLevel('error')
     main()

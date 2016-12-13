@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# Monkey patch the several parts of standard library that can block the
+# interpreter with parts provided by gevent.
 from gevent import monkey; monkey.patch_all()
 
 from time import sleep
@@ -26,42 +28,67 @@ switches = []
 
 
 class Controller(object):
+    """A floodlight controller that runs on a Docker container."""
+
     __slots__ = ('name', 'container', 'mn_controller',
                  'port_controller', 'port_rest_api',
                  'cpu_percentage', 'state',
                  'greenlet_cpu_percentage')
 
+    # Enumeration for controller's state.
     STATE_ACTIVE = 0
     STATE_PENDING = 1
     STATE_INACTIVE = 2
 
-    # Atomic counter in Python world.
     counter = itertools.count()
+    """Atomic counter in Python world for the index number of controller.
+    Since multiple greenlets (lightweight threads) may create controllers at
+    the same time, we need to guarantee the atomicity of counter.
+    """
 
     def __init__(self, activate=True):
+        """Create a new controller.
+
+        If activate is False, the Docker container for running this controller
+        will not be created and started. You can explicitly activate this
+        controller later by calling activate().
+        """
         self.cpu_percentage = 0.0
         self.state = Controller.STATE_INACTIVE
+        # Get current value of counter and increment atomically.
         i = Controller.counter.next()
         self.name = "floodlight{}".format(i)
         self.port_controller = ORIG_PORT_CONTROLLER + i
         self.port_rest_api = ORIG_PORT_REST_API + i
+        #: Docker container on which this controller runs.
         self.container = None
+        #: A greenlet which monitors the container's cpu usage in percentage.
         self.greenlet_cpu_percentage = None
         if activate:
             self.activate()
 
     def activate(self):
+        """Activate this controller.
+
+        After calling this function, the controller's state will be ACTIVE.
+        """
         current_state = self.state
         if current_state is Controller.STATE_ACTIVE:
             return
         if self.container is None:
+            # This is the first time this controller is activated.
             self.create_container()
         if current_state is Controller.STATE_INACTIVE:
+            # The Docker container must be running
+            # if the current state is PENDING.
             client.start(self.container)
         self.state = Controller.STATE_ACTIVE
+        # Spawn a greenlet which monitors the container's cpu usage in percentage.
+        # This greenlet will keep updating `self.cpu_percentage` until it is killed.
         self.greenlet_cpu_percentage = gevent.spawn(monitor_cpu_percentage, self)
 
     def create_container(self):
+        """Create a Docker container for this controller."""
         port_controller = self.port_controller
         port_rest_api = self.port_rest_api
         host_config = client.create_host_config(port_bindings={
@@ -77,6 +104,11 @@ class Controller(object):
         self.container = container
 
     def deactivate(self):
+        """Deactivate this controller.
+
+        After calling this function, this controller's state will be INACTIVE
+        and the container where this controller runs will stop.
+        """
         if self.state is Controller.STATE_INACTIVE:
             return
         self.stop_monitoring()
@@ -84,13 +116,24 @@ class Controller(object):
         self.state = Controller.STATE_INACTIVE
 
     def set_pending(self):
+        """Set the state of controller to PENDING.
+
+        The Docker container where this controller runs will not stop.
+        """
         if self.state is Controller.STATE_PENDING:
             return
         self.stop_monitoring()
         self.state = Controller.STATE_PENDING
 
     def remove(self):
-        self.stop_monitoring()
+        """Remove the Docker container where this controller runs.
+
+        Since this function kills the Docker container, make sure you are not
+        doing something important with the container when you call this
+        function.
+        """
+        if self.state is Controller.STATE_ACTIVE:
+            self.stop_monitoring()
         container = self.container
         client.kill(container)
         try:
@@ -99,6 +142,8 @@ class Controller(object):
             client.remove_container(container, force=True)
 
     def stop_monitoring(self):
+        """Stop monitoring the CPU usage of the Docker container where this
+        controller runs."""
         g = self.greenlet_cpu_percentage
         if not g.dead:
             g.kill()

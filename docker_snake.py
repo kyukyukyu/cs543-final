@@ -54,6 +54,9 @@ class Controller(object):
     #: Global list of controllers created.
     controllers = []
 
+    #: Mininet network.
+    mininet = Mininet(controller=RemoteController, switch=UserSwitch)
+
     def __init__(self, activate=True):
         """Create a new controller.
 
@@ -93,6 +96,10 @@ class Controller(object):
             # if the current state is PENDING.
             client.start(self.container)
         self.state = Controller.STATE_ACTIVE
+        self.mn_controller = Controller.mininet.addController(name=self.name,
+                                                              controller=RemoteController,
+                                                              defaultIP=DOCKER_HOST,
+                                                              port=self.port_controller)
         # Spawn a greenlet which monitors the container's cpu usage in percentage.
         # This greenlet will keep updating `self.cpu_percentage` until it is killed.
         self.greenlet_cpu_percentage = gevent.spawn(monitor_cpu_percentage, self)
@@ -427,27 +434,9 @@ def addHost(net, N):
     return net.addHost(name, ip=ip)
 
 
-def MultiControllerNet(controller1, controller2, controller3):
+def MultiControllerNet(controllers):
     "Create a network with multiple controllers."
-
-    net = Mininet(controller=RemoteController, switch=UserSwitch)
-
-    print "Creating controllers"
-    c1 = net.addController(name='RemoteFloodlight1',
-                           controller=RemoteController,
-                           defaultIP=DOCKER_HOST,
-                           port=controller1.port_controller)
-    c2 = net.addController(name='RemoteFloodlight2',
-                           controller=RemoteController,
-                           defaultIP=DOCKER_HOST,
-                           port=controller2.port_controller)
-    c3 = net.addController(name='RemoteFloodlight3',
-                           controller=RemoteController,
-                           defaultIP=DOCKER_HOST,
-                           port=controller3.port_controller)
-    controller1.mn_controller = c1
-    controller2.mn_controller = c2
-    controller3.mn_controller = c3
+    net = Controller.mininet
 
     print "*** Creating switches"
     s1 = net.addSwitch('s1', cls=OVSSwitch)
@@ -489,6 +478,8 @@ def MultiControllerNet(controller1, controller2, controller3):
     print "*** Building network"
     net.build()
 
+    c1, c2, c3 = (c.mn_controller for c in controllers)
+
     # In theory this doesn't do anything
     c1.start()
     c2.start()
@@ -505,7 +496,7 @@ def MultiControllerNet(controller1, controller2, controller3):
     return net
 
 
-def ping_random_hosts(net):
+def ping_random_hosts():
     global rtt_sum, num_packets
     while True:
         r1 = random.randrange(1, 16)
@@ -515,7 +506,7 @@ def ping_random_hosts(net):
 
         hx = list_hosts[r1] #random host1
         hy = list_hosts[r2] #random host2
-        ping_delays = net.pingFull([hx, hy])
+        ping_delays = Controller.mininet.pingFull([hx, hy])
         test_outputs = ping_delays[0]
         node, dest, ping_outputs = test_outputs
         sent, received, rttmin, rttavg, rttmax, rttdev = ping_outputs
@@ -539,8 +530,8 @@ def create_containers():
 
 
 def simulate():
-    net = MultiControllerNet(*Controller.controllers)
-    net.start()
+    MultiControllerNet(Controller.controllers)
+    Controller.mininet.start()
     # Wait for switches to be turned on.
     sleep(20)
     s1, s2, s3, s4, s5, s6 = switches
@@ -555,7 +546,7 @@ def simulate():
     # Run the load adapter module.
     gevent.spawn(adapter.run)
     # Send pings between a random pair of hosts.
-    g_ping = gevent.spawn(ping_random_hosts, net)
+    g_ping = gevent.spawn(ping_random_hosts)
     # Check response time periodically.
     g_res = gevent.spawn(check_response_time)
     # Keep running for a while.
@@ -564,7 +555,7 @@ def simulate():
     g_res.kill()
     g_ping.kill()
     adapter.stop()
-    net.stop()
+    Controller.mininet.stop()
 
 
 def monitor_cpu_percentage(controller):

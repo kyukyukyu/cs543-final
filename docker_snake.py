@@ -161,6 +161,126 @@ class Controller(object):
             c.remove_container()
 
 
+class LoadAdapter(object):
+    """Load adapter module for multiple controllers.
+
+    Currently, it works like ElastiCon's one. To run this module, you should
+    create an instance of this class and explicitly call run() on the instance.
+    """
+
+    __slots__ = ('running',
+                 'controller_to_switch_on', 'controller_to_switch_off',
+                 'assignment')
+
+    HIGH_UTIL_THRESH = 70.0
+    LOW_UTIL_THRESH = 10.0
+
+    def __init__(self):
+        self.running = False
+        self.controller_to_switch_on = None
+        self.controller_to_switch_off = None
+        self.assignment = {}
+        """Controller assignment of the switches. A key-value pair has
+        a controller as the key, and the set of switches assigned to the
+        controller as the value."""
+
+    def assign(self, switch, controller):
+        """Assign a switch which is not assigned to any controller yet to a
+        controller.
+
+        :param mininet.node.OVSSwitch switch: A switch. This switch should not
+            be assigned to a controller yet.
+        :param Controller controller: A controller to assign the switch."""
+        assignment = self.assignment
+        if controller not in assignment:
+            assignment[controller] = set()
+        switches = assignment[controller]
+        switches.add(switch)
+
+    def run(self):
+        """Run this module."""
+        self.running = True
+        while self.running:
+            migration_set = self.do_rebalancing()
+            if migration_set is None:
+                if self.do_resizing():
+                    if self.check_resizing():
+                        migration_set = self.do_rebalancing()
+                    else:
+                        self.revert_resizing()
+            self.execute_plan(migration_set)
+            sleep(3)
+
+    def stop(self):
+        """Gracefully stop this module."""
+        self.running = False
+
+    def do_rebalancing(self):
+        migration_set = None
+        # TODO: implement the migration plan. Make migration_set like
+        # [(switch, old_controller, new_controller), (switch_, old_controller_, new_controller_)]
+        return migration_set
+
+    def do_resizing(self):
+        for c in Controller.controllers:
+            if c.cpu_percentage >= self.HIGH_UTIL_THRESH:
+                self.switch_on_controller()
+                return True
+        counter = 0
+        most_free_controller = None
+        min_cpu_percentage = 0.0
+        for c in Controller.controllers:
+            cpu_percentage = c.cpu_percentage
+            if cpu_percentage <= self.LOW_UTIL_THRESH:
+                counter += 1
+                if most_free_controller is None or cpu_percentage <= min_cpu_percentage:
+                    most_free_controller = c
+                    min_cpu_percentage = cpu_percentage
+        if counter >= 2:
+            self.switch_off_controller(most_free_controller)
+            return True
+        else:
+            return False
+
+    def switch_on_controller(self):
+        self.controller_to_switch_on = Controller(activate=False)
+
+    def switch_off_controller(self, controller):
+        self.controller_to_switch_off = controller
+
+    def check_resizing(self):
+        # TODO: actual check for resizing.
+        return True
+
+    def revert_resizing(self):
+        self.controller_to_switch_on = None
+        self.controller_to_switch_off = None
+
+    def execute_plan(self, migration_set):
+        self.execute_power_on_controller()
+        self.execute_migrations(migration_set)
+        self.execute_power_off_controller()
+
+    def execute_power_on_controller(self):
+        self.controller_to_switch_on.activate()
+
+    def execute_migrations(self, migration_set):
+        """Execute the migrations.
+
+        :param migration_set: A set of migrations. Each migration should be
+            a tuple of switch, the old controller, and the new controller.
+        :type migration_set: collections.Iterable[tuple(mininet.node.OVSSwitch, Controller, Controller)]
+        """
+        for switch, old_controller, new_controller in migration_set:
+            switch.start([new_controller])
+            switches_old = self.assignment[old_controller]
+            switches_old.remove(switch)
+            self.assign(switch, new_controller)
+
+    def execute_power_off_controller(self):
+        self.controller_to_switch_off.deactivate()
+
+
 def addHost(net, N):
     name = 'h%d' % N
     ip = '10.0.0.%d' % N
@@ -251,6 +371,7 @@ def simulate():
     # Wait for switches to be turned on.
     sleep(10)
     net.pingAll()
+    # TODO: run the actual load adaption here, by creating a LoadAdapter object, assign the controller to switches, and run the adapter.
     CLI(net)
     net.stop()
 

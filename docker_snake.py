@@ -134,6 +134,8 @@ class Controller(object):
         doing something important with the container when you call this
         function.
         """
+        if self.container is None:
+            return
         if self.state is Controller.STATE_ACTIVE:
             self.stop_monitoring()
         container = self.container
@@ -142,6 +144,7 @@ class Controller(object):
             client.remove_container(container)
         except DockerAPIError as e:
             client.remove_container(container, force=True)
+        self.container = None
 
     def stop_monitoring(self):
         """Stop monitoring the CPU usage of the Docker container where this

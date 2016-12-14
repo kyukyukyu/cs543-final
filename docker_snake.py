@@ -8,6 +8,7 @@ from math import sqrt, floor
 from time import sleep
 from datetime import datetime
 import itertools
+import logging
 import random
 
 from docker.errors import APIError as DockerAPIError
@@ -23,6 +24,19 @@ client = docker.from_env()
 DOCKER_HOST = '127.0.0.1'
 ORIG_PORT_CONTROLLER = 6653
 ORIG_PORT_REST_API = 8080
+
+
+logging.basicConfig(level=logging.DEBUG)
+logger_adapter = logging.getLogger('adapter')
+logger_container = logging.getLogger('container')
+logger_response = logging.getLogger('response')
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+formatter = logging.Formatter('%(name)-10s: %(levelname)-8s %(message)s')
+console.setFormatter(formatter)
+logger_adapter.addHandler(console)
+logger_container.addHandler(console)
+logger_response.addHandler(console)
 
 num_packets = 0
 rtt_sum = 0
@@ -172,7 +186,8 @@ class Controller(object):
     @classmethod
     def remove_containers(cls):
         for c in cls.controllers:
-            print("removing container {name}...".format(name=c.name))
+            logger_container.info("removing container {name}..."
+                                  .format(name=c.name))
             c.remove_container()
 
 
@@ -237,7 +252,7 @@ class LoadAdapter(object):
         self.running = False
 
     def do_rebalancing(self):
-        print("rebalancing...")
+        logger_adapter.info("rebalancing...")
         migration_set = set()
         if self.controller_to_switch_on is not None:
             self.assignment[self.controller_to_switch_on] = set()
@@ -252,7 +267,7 @@ class LoadAdapter(object):
             if stddev_improv >= LoadAdapter.STDDEV_THRESH:
                 migration_set.add(best_migration)
             else:
-                print("returning migration set...")
+                logger_adapter.info("returning migration set...")
                 return migration_set
 
     def do_rebalancing_for_switch_off(self):
@@ -275,7 +290,7 @@ class LoadAdapter(object):
         return migration_set
 
     def get_best_migration(self, utilizations):
-        print("finding best migration...")
+        logger_adapter.info("finding best migration...")
         best_migration = None
         best_stddev_improv = 0.0
         stddev = LoadAdapter.stddev(p for p, _ in utilizations.itervalues())
@@ -356,12 +371,13 @@ class LoadAdapter(object):
             return False
 
     def switch_on_controller(self):
-        print("let's switch on a controller!")
+        logger_adapter.info("let's switch on a controller!")
         new_controller = Controller(activate=False)
         self.controller_to_switch_on = new_controller
 
     def switch_off_controller(self, controller):
-        print("let's switch off {name}!".format(name=controller.name))
+        logger_adapter.info("let's switch off {name}!"
+                            .format(name=controller.name))
         self.controller_to_switch_off = controller
 
     def check_resizing(self):
@@ -386,7 +402,7 @@ class LoadAdapter(object):
             return True
 
     def revert_resizing(self):
-        print("reverts resizing...")
+        logger_adapter.info("reverts resizing...")
         if self.controller_to_switch_on is not None:
             del self.assignment[self.controller_to_switch_on]
         self.controller_to_switch_on = None
@@ -399,7 +415,8 @@ class LoadAdapter(object):
 
     def execute_power_on_controller(self):
         if self.controller_to_switch_on is not None:
-            print("activate the new controller {name}...".format(name=self.controller_to_switch_on.name))
+            logger_adapter.info("activate the new controller {name}..."
+                                .format(name=self.controller_to_switch_on.name))
             self.controller_to_switch_on.activate()
 
     def execute_migrations(self, migration_set):
@@ -414,14 +431,15 @@ class LoadAdapter(object):
             switches_old = self.assignment[old_controller]
             switches_old.remove(switch)
             self.assign(switch, new_controller)
-            print("migrating switch {switch_name} from {old_ctrl_name} to {new_ctrl_name}..."
-                  .format(switch_name=switch.name,
-                          old_ctrl_name=old_controller.name,
-                          new_ctrl_name=new_controller.name))
+            logger_adapter.info("migrating switch {switch_name} from {old_ctrl_name} to {new_ctrl_name}..."
+                                .format(switch_name=switch.name,
+                                        old_ctrl_name=old_controller.name,
+                                        new_ctrl_name=new_controller.name))
 
     def execute_power_off_controller(self):
         if self.controller_to_switch_off is not None:
-            print("power off controller {name}...".format(name=self.controller_to_switch_off.name))
+            logger_adapter.info("power off controller {name}..."
+                                .format(name=self.controller_to_switch_off.name))
             del self.assignment[self.controller_to_switch_off]
             self.controller_to_switch_off.deactivate()
 
@@ -517,7 +535,7 @@ def check_response_time():
     while True:
         sleep(1)
         if num_packets > 0:
-            print float(rtt_sum) / float(num_packets)
+            logger_response.info(float(rtt_sum) / float(num_packets))
         rtt_sum = 0
         num_packets = 0
 
@@ -576,7 +594,8 @@ def get_cpu_percentage(stat):
 def main():
     create_containers()
     for c in Controller.controllers:
-        print("starting container {name}...".format(name=c.name))
+        logger_container.info("starting container {name}..."
+                              .format(name=c.name))
         c.activate()
     simulate()
     Controller.remove_containers()

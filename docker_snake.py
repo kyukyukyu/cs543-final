@@ -519,9 +519,9 @@ def create_containers():
 
 def simulate():
     MultiControllerNet(Controller.controllers)
-    Controller.mininet.start()
     # Wait for switches to be turned on.
-    sleep(20)
+    Controller.mininet.waitConnected()
+    logger_adapter.info("nodes in mininet are connected!")
     s1, s2, s3, s4, s5, s6 = switches
     c1, c2, c3 = Controller.controllers
     adapter = LoadAdapter()
@@ -532,12 +532,18 @@ def simulate():
     adapter.assign(s5, c2)
     adapter.assign(s6, c2)
     # Run the load adapter module.
-    gevent.spawn(adapter.run)
+    g_load = gevent.spawn(adapter.run)
     # Keep running for a while.
-    sleep(60)
-    # Stop the tasks.
-    adapter.stop()
-    Controller.mininet.stop()
+    try:
+        while True:
+            sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Stop the tasks.
+        adapter.stop()
+        g_load.kill()
+        Controller.mininet.stop()
 
 
 def monitor_cpu_percentage(controller):

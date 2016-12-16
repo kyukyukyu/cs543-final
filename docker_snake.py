@@ -231,6 +231,7 @@ class LoadAdapter(object):
     def run(self):
         """Run this module."""
         self.running = True
+        logger_adapter.info("running the load adapter module...")
         while self.running:
             self.controller_to_switch_on = None
             self.controller_to_switch_off = None
@@ -287,6 +288,7 @@ class LoadAdapter(object):
                     break
                 migration_set.add((switch, controller_to_switch_off, controller))
                 i -= 1
+            switches_off.clear()
         return migration_set
 
     def get_best_migration(self, utilizations):
@@ -298,9 +300,6 @@ class LoadAdapter(object):
             p, n_switches = util
             if 0 == n_switches:
                 continue
-            switch = None
-            for switch in self.assignment[c]:
-                break
             for c_, util_ in utilizations.iteritems():
                 if c is c_ or c is self.controller_to_switch_off:
                     continue
@@ -312,12 +311,13 @@ class LoadAdapter(object):
                                                   in utilizations.itervalues())
                 stddev_improv = stddev - new_stddev
                 if best_stddev_improv < stddev_improv:
-                    best_migration = (switch, c, c_)
+                    best_migration = (None, c, c_)
                     best_stddev_improv = stddev_improv
                 utilizations[c] = util
                 utilizations[c_] = util_
         if best_migration is not None:
             _, c, c_ = best_migration
+            best_migration = (self.assignment[c].pop(), c, c_)
             p, n_switches = utilizations[c]
             p_, n_switches_ = utilizations[c_]
             delta = p / n_switches

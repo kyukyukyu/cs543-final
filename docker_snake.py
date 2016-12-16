@@ -512,34 +512,6 @@ def MultiControllerNet(controllers):
     return net
 
 
-def ping_random_hosts():
-    global rtt_sum, num_packets
-    while True:
-        r1 = random.randrange(1, 16)
-        r2 = random.randrange(1, 16)
-        while r1 == r2:
-            r2 = random.randrange(1, 16)
-
-        hx = list_hosts[r1] #random host1
-        hy = list_hosts[r2] #random host2
-        ping_delays = Controller.mininet.pingFull([hx, hy])
-        test_outputs = ping_delays[0]
-        node, dest, ping_outputs = test_outputs
-        sent, received, rttmin, rttavg, rttmax, rttdev = ping_outputs
-        rtt_sum += rttavg
-        num_packets += 1
-
-
-def check_response_time():
-    global rtt_sum, num_packets
-    while True:
-        sleep(1)
-        if num_packets > 0:
-            logger_response.info(float(rtt_sum) / float(num_packets))
-        rtt_sum = 0
-        num_packets = 0
-
-
 def create_containers():
     for i in range(3):
         Controller(activate=False)
@@ -561,15 +533,9 @@ def simulate():
     adapter.assign(s6, c2)
     # Run the load adapter module.
     gevent.spawn(adapter.run)
-    # Send pings between a random pair of hosts.
-    g_ping = gevent.spawn(ping_random_hosts)
-    # Check response time periodically.
-    g_res = gevent.spawn(check_response_time)
     # Keep running for a while.
     sleep(60)
     # Stop the tasks.
-    g_res.kill()
-    g_ping.kill()
     adapter.stop()
     Controller.mininet.stop()
 

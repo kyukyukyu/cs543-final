@@ -10,6 +10,7 @@ from datetime import datetime
 import itertools
 import logging
 import random
+import subprocess
 
 from docker.errors import APIError as DockerAPIError
 from mininet.clean import cleanup as mininet_cleanup
@@ -419,6 +420,8 @@ class LoadAdapter(object):
                                 .format(name=self.controller_to_switch_on.name))
             self.controller_to_switch_on.activate()
 
+    MIGRATION_CMD_FORMAT = "ovs-vsctl set-controller {switch.name} {ctrl.protocol}:{ctrl_ip}:{ctrl.port:d}"
+
     def execute_migrations(self, migration_set):
         """Execute the migrations.
 
@@ -427,14 +430,17 @@ class LoadAdapter(object):
         :type migration_set: collections.Iterable[tuple(mininet.node.OVSSwitch, Controller, Controller)]
         """
         for switch, old_controller, new_controller in migration_set:
-            switch.start([new_controller.mn_controller])
-            switches_old = self.assignment[old_controller]
-            switches_old.remove(switch)
-            self.assign(switch, new_controller)
             logger_adapter.info("migrating switch {switch_name} from {old_ctrl_name} to {new_ctrl_name}..."
                                 .format(switch_name=switch.name,
                                         old_ctrl_name=old_controller.name,
                                         new_ctrl_name=new_controller.name))
+            ctrl = new_controller.mn_controller
+            cmd = LoadAdapter.MIGRATION_CMD_FORMAT.format(switch=switch,
+                                                          ctrl=ctrl,
+                                                          ctrl_ip=ctrl.IP())
+            subprocess.call(cmd, shell=True)
+            switches_old = self.assignment[old_controller]
+            self.assign(switch, new_controller)
 
     def execute_power_off_controller(self):
         if self.controller_to_switch_off is not None:

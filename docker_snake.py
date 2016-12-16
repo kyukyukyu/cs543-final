@@ -486,10 +486,8 @@ def MultiControllerNet(controllers):
     s1.linkTo(s2)
     s2.linkTo(s3)
     s3.linkTo(s4)
-    s4.linkTo(s5)
+    s2.linkTo(s5)
     s5.linkTo(s6)
-    s6.linkTo(s1)
-    s1.linkTo(s4)
 
     print "*** Building network"
     net.build()
